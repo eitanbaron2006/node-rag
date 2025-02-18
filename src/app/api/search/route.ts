@@ -31,6 +31,7 @@ interface FileResult {
   total_chunks: number;
   matches: Match[];
   best_match?: number;
+  sources_count?: number;
 }
 
 function hasExactMatch(text: string, query: string): boolean {
@@ -162,13 +163,35 @@ export async function POST(request: NextRequest) {
         // Prioritize exact matches in best_match calculation
         best_match: Math.max(...file.matches.map(m => m.exact_match ? 1 : m.similarity)),
         matches: file.matches.sort((a, b) => {
-          // Sort by exact match first, then by similarity
-          if (a.exact_match && !b.exact_match) return -1;
-          if (!a.exact_match && b.exact_match) return 1;
-          return b.similarity - a.similarity;
-        })
-      }))
-      .sort((a, b) => (b.best_match ?? 0) - (a.best_match ?? 0));
+        // Sort by exact match first, then by similarity
+        if (a.exact_match && !b.exact_match) return -1;
+        if (!a.exact_match && b.exact_match) return 1;
+        return b.similarity - a.similarity;
+      }),
+      // Add unique sources count for debugging
+      sources_count: 1
+    }))
+    .sort((a, b) => (b.best_match ?? 0) - (a.best_match ?? 0))
+    // Combine files with the same name
+    .reduce<FileResult[]>((acc, curr) => {
+      const existingFile = acc.find(file => file.file_name === curr.file_name);
+      if (existingFile) {
+        // Merge matches arrays and remove duplicates
+        existingFile.matches = [...existingFile.matches, ...curr.matches]
+          .sort((a, b) => {
+            if (a.exact_match && !b.exact_match) return -1;
+            if (!b.exact_match && a.exact_match) return 1;
+            return b.similarity - a.similarity;
+          });
+        
+        // Update best_match if current is better
+        existingFile.best_match = Math.max(existingFile.best_match ?? 0, curr.best_match ?? 0);
+        existingFile.sources_count = (existingFile.sources_count ?? 1) + (curr.sources_count ?? 1);
+      } else {
+        acc.push(curr);
+      }
+      return acc;
+    }, []);
 
     console.log('Final results:', {
       totalMatches: results.length,

@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from '../../../utils/embedding.ts';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import process from "node:process";
 
 interface MatchedDocument {
@@ -22,7 +22,10 @@ export async function POST(request: NextRequest) {
   try {
     const { query } = await request.json();
     if (!query) {
-      return NextResponse.json({ message: 'Query is required' }, { status: 400 });
+      return new Response(JSON.stringify({ message: 'Query is required' }), {
+        headers: { 'content-type': 'application/json' },
+        status: 400
+      });
     }
 
     console.log('Processing query for RAG:', query);
@@ -33,10 +36,13 @@ export async function POST(request: NextRequest) {
       queryEmbedding = await generateEmbedding(query);
     } catch (error) {
       console.error('Error generating query embedding:', error);
-      return NextResponse.json({ 
+      return new Response(JSON.stringify({ 
         message: 'Failed to generate query embedding', 
         error: error instanceof Error ? error.message : String(error) 
-      }, { status: 500 });
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 500
+      });
     }
 
     // Search for relevant documents
@@ -48,16 +54,22 @@ export async function POST(request: NextRequest) {
 
     if (searchError) {
       console.error('Search error:', searchError);
-      return NextResponse.json({ 
+      return new Response(JSON.stringify({ 
         message: 'Error searching documents', 
         error: searchError.message 
-      }, { status: 500 });
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 500
+      });
     }
 
     if (!documents || documents.length === 0) {
-      return NextResponse.json({ 
+      return new Response(JSON.stringify({ 
         message: 'No relevant documents found for the query' 
-      }, { status: 404 });
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 404
+      });
     }
 
     // Prepare context from matched documents
@@ -69,6 +81,16 @@ ${doc.chunk_text}
     // Call Gemini API for generation
     const geminiUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent';
     const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      console.error('GEMINI_API_KEY is not configured');
+      return new Response(JSON.stringify({ 
+        message: 'Gemini API key is not configured'
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 500
+      });
+    }
 
     try {
       const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
@@ -120,28 +142,53 @@ Please provide a comprehensive answer using the information above, and mention w
       }
 
       const result = await response.json();
-      const generatedText = result.candidates[0].content.parts[0].text;
+      
+      // בדיקות מקיפות לתוכן התשובה
+      if (!result || !result.candidates || !result.candidates[0]) {
+        throw new Error('Invalid response format: missing candidates');
+      }
 
-      return NextResponse.json({
+      const candidate = result.candidates[0];
+      if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+        throw new Error('Invalid response format: missing content parts');
+      }
+
+      const generatedText = candidate.content.parts[0].text;
+      if (typeof generatedText !== 'string') {
+        throw new Error('Invalid response format: missing or invalid text');
+      }
+
+      return new Response(JSON.stringify({
         answer: generatedText,
         sources: (documents as MatchedDocument[]).map(doc => ({
           file_name: doc.file_name,
           similarity: doc.similarity
         }))
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 200
       });
 
     } catch (error) {
       console.error('Generation error:', error);
-      return NextResponse.json({ 
-        message: 'Error generating response', 
-        error: error instanceof Error ? error.message : String(error) 
-      }, { status: 500 });
+      // שליחת הודעת שגיאה יותר ספציפית למשתמש
+      return new Response(JSON.stringify({ 
+        message: 'Failed to generate response', 
+        error: `Error processing the request: ${error instanceof Error ? error.message : String(error)}`,
+        errorType: 'GENERATION_ERROR'
+      }), {
+        headers: { 'content-type': 'application/json' },
+        status: 500
+      });
     }
   } catch (error) {
     console.error('Unexpected error:', error);
-    return NextResponse.json({ 
+    return new Response(JSON.stringify({ 
       message: 'Server error', 
       error: error instanceof Error ? error.message : String(error) 
-    }, { status: 500 });
+    }), {
+      headers: { 'content-type': 'application/json' },
+      status: 500
+    });
   }
 }
