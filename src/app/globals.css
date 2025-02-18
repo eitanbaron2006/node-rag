@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+html[dir="rtl"] input,
+html[dir="rtl"] textarea {
+  text-align: right;
+}
+
+html[dir="rtl"] .ltr {
+  direction: ltr;
+}
