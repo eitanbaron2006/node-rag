@@ -36,9 +36,9 @@ BEGIN
     embeddings.chunk_text,
     embeddings.chunk_index,
     embeddings.total_chunks,
-    1 - (embeddings.embedding_vector <=> query_embedding) as similarity
+    (1 - (embeddings.embedding_vector <=> query_embedding)) as similarity
   FROM embeddings
-  WHERE 1 - (embeddings.embedding_vector <=> query_embedding) > match_threshold
+  WHERE (1 - (embeddings.embedding_vector <=> query_embedding)) > match_threshold
   ORDER BY similarity DESC
   LIMIT match_count;
 END;
