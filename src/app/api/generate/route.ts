@@ -1,194 +1,155 @@
 import { createClient } from '@supabase/supabase-js';
-import { generateEmbedding } from '../../../utils/embedding.ts';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextRequest } from 'next/server';
-import process from "node:process";
 
-interface MatchedDocument {
-  id: number;
-  file_url: string;
-  file_name: string;
-  chunk_text: string;
-  chunk_index: number;
-  total_chunks: number;
-  similarity: number;
-}
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const DEBUG = true;
+
+interface SearchResult {
+  chunk_text: string;
+  chunk_index: number;
+  file_name: string;
+  similarity: number;
+}
+
+interface GenerateResponse {
+  content: string;
+  debug: {
+    contextChunks: number;
+    hasContext: boolean;
+    query: string;
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { query } = await request.json();
+
     if (!query) {
-      return new Response(JSON.stringify({ message: 'Query is required' }), {
-        headers: { 'content-type': 'application/json' },
-        status: 400
-      });
+      return new Response(
+        JSON.stringify({ message: 'נדרשת שאילתה' }),
+        { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
     }
 
-    console.log('Processing query for RAG:', query);
+    if (DEBUG) console.log('Processing query:', query);
 
-    // Generate embedding for the query
-    let queryEmbedding;
-    try {
-      queryEmbedding = await generateEmbedding(query);
-    } catch (error) {
-      console.error('Error generating query embedding:', error);
-      return new Response(JSON.stringify({ 
-        message: 'Failed to generate query embedding', 
-        error: error instanceof Error ? error.message : String(error) 
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 500
-      });
-    }
-
-    // Search for relevant documents
-    const { data: documents, error: searchError } = await supabase.rpc('match_documents', {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.7,
+    // Search for relevant documents first
+    const { data: searchData, error: searchError } = await supabase.rpc('match_documents', {
+      query_embedding: await generateQueryEmbedding(query),
+      match_threshold: 0.5,
       match_count: 5
     });
 
     if (searchError) {
       console.error('Search error:', searchError);
-      return new Response(JSON.stringify({ 
-        message: 'Error searching documents', 
-        error: searchError.message 
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 500
-      });
+      return new Response(
+        JSON.stringify({
+          message: 'שגיאה בחיפוש מסמכים',
+          error: searchError.message
+        }),
+        { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
     }
 
-    if (!documents || documents.length === 0) {
-      return new Response(JSON.stringify({ 
-        message: 'No relevant documents found for the query' 
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 404
-      });
+    // Build context from relevant documents
+    let context = '';
+    if (searchData && searchData.length > 0) {
+      context = (searchData as SearchResult[])
+        .map(doc => doc.chunk_text)
+        .join('\n\n');
+      
+      if (DEBUG) {
+        console.log('Found relevant context:', {
+          chunks: searchData.length,
+          preview: context.substring(0, 200)
+        });
+      }
     }
 
-    // Prepare context from matched documents
-    const context = (documents as MatchedDocument[]).map(doc => `
-Content from ${doc.file_name} (similarity: ${(doc.similarity * 100).toFixed(1)}%):
-${doc.chunk_text}
-`).join('\n\n');
+    // Prepare system prompt
+    const systemPrompt = `
+אתה עוזר מידע מקצועי המשיב לשאלות בעברית. תפקידך לענות על שאלות באופן מועיל ומדויק תוך שימוש בהקשר שסופק.
 
-    // Call Gemini API for generation
-    const geminiUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent';
-    const apiKey = process.env.GEMINI_API_KEY;
+כללים חשובים:
+1. ענה תמיד בעברית
+2. אם השאלה היא ברכה או שיחה כללית (כמו "היי", "שלום", "מה שלומך"), ענה בצורה ידידותית ומנומסת בהתאם לדוגמאות הבאות:
+   - "היי" -> "היי! במה אוכל לעזור לך היום?"
+   - "שלום" -> "שלום! אשמח לעזור לך. במה תרצה שאעזור?"
+   - "מה שלומך" -> "שלומי טוב, תודה! אשמח לסייע לך במידע שתצטרך."
+3. אם אין מידע רלוונטי בהקשר, ענה: "שלום! למרבה הצער אין לי מידע רלוונטי בנושא זה במסמכים שהועלו למערכת. אשמח לעזור לך בנושא אחר."
+4. השתמש במידע מההקשר שסופק בלבד
+5. נסח את התשובה באופן ברור וקריא
 
-    if (!apiKey) {
-      console.error('GEMINI_API_KEY is not configured');
-      return new Response(JSON.stringify({ 
-        message: 'Gemini API key is not configured'
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 500
-      });
-    }
-
-    try {
-      const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `Based on the following information, please answer this question: "${query}"
-
-Context from relevant documents:
+ההקשר הנוכחי:
 ${context}
 
-Please provide a comprehensive answer using the information above, and mention which documents or parts you're referring to when providing information.`
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 1024,
-          },
-          safetySettings: [
-            {
-              category: "HARM_CATEGORY_HARASSMENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-              category: "HARM_CATEGORY_HATE_SPEECH",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE"
-            }
-          ]
-        })
-      });
+שאלה: ${query}
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${error}`);
-      }
+תשובה:`;
 
-      const result = await response.json();
-      
-      // בדיקות מקיפות לתוכן התשובה
-      if (!result || !result.candidates || !result.candidates[0]) {
-        throw new Error('Invalid response format: missing candidates');
-      }
-
-      const candidate = result.candidates[0];
-      if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-        throw new Error('Invalid response format: missing content parts');
-      }
-
-      const generatedText = candidate.content.parts[0].text;
-      if (typeof generatedText !== 'string') {
-        throw new Error('Invalid response format: missing or invalid text');
-      }
-
-      return new Response(JSON.stringify({
-        answer: generatedText,
-        sources: (documents as MatchedDocument[]).map(doc => ({
-          file_name: doc.file_name,
-          similarity: doc.similarity
-        }))
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 200
-      });
-
-    } catch (error) {
-      console.error('Generation error:', error);
-      // שליחת הודעת שגיאה יותר ספציפית למשתמש
-      return new Response(JSON.stringify({ 
-        message: 'Failed to generate response', 
-        error: `Error processing the request: ${error instanceof Error ? error.message : String(error)}`,
-        errorType: 'GENERATION_ERROR'
-      }), {
-        headers: { 'content-type': 'application/json' },
-        status: 500
-      });
-    }
-  } catch (error) {
-    console.error('Unexpected error:', error);
-    return new Response(JSON.stringify({ 
-      message: 'Server error', 
-      error: error instanceof Error ? error.message : String(error) 
-    }), {
-      headers: { 'content-type': 'application/json' },
-      status: 500
+    const chat = model.startChat({
+      history: [],
+      generationConfig: {
+        maxOutputTokens: 1000,
+        temperature: 0.7,
+      },
     });
+
+    const result = await chat.sendMessage(systemPrompt);
+    const response = result.response;
+    
+    if (DEBUG) {
+      console.log('Generated response:', response.text());
+    }
+
+    const responseData: GenerateResponse = {
+      content: response.text(),
+      debug: {
+        contextChunks: searchData?.length ?? 0,
+        hasContext: Boolean(context),
+        query
+      }
+    };
+
+    return new Response(
+      JSON.stringify(responseData),
+      { 
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+  } catch (error) {
+    console.error('Generate error:', error);
+    return new Response(
+      JSON.stringify({
+        message: 'שגיאת מערכת',
+        error: error instanceof Error ? error.message : String(error)
+      }),
+      { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
+}
+
+async function generateQueryEmbedding(text: string): Promise<number[]> {
+  const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+  const result = await embeddingModel.embedContent(text);
+  return result.embedding.values;
 }
