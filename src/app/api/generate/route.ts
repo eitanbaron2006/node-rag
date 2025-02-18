@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { generateEmbedding } from '../../../utils/embedding.ts';
 import { NextRequest } from 'next/server';
+import process from "node:process";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
@@ -29,9 +31,31 @@ interface GenerateResponse {
 }
 
 function findKeywordMatches(query: string, text: string): number {
-  const queryWords = query.toLowerCase().split(/\s+/);
-  const textLower = text.toLowerCase();
-  return queryWords.filter(word => word.length > 2 && textLower.includes(word)).length;
+  const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  
+  // Split text into title and body
+  const [title, ...bodyParts] = text.split('\n');
+  const body = bodyParts.join('\n');
+  
+  let score = 0;
+  
+  // Check for exact phrase match in title (higher score)
+  if (title.toLowerCase().includes(query.toLowerCase())) {
+    score += 20;
+  }
+  
+  // Check for individual word matches in title (higher score)
+  score += queryWords.filter(word => title.toLowerCase().includes(word)).length * 5;
+  
+  // Check for exact phrase match in body
+  if (body.toLowerCase().includes(query.toLowerCase())) {
+    score += 10;
+  }
+  
+  // Check for individual word matches in body
+  score += queryWords.filter(word => body.toLowerCase().includes(word)).length;
+  
+  return score;
 }
 
 export async function POST(request: NextRequest) {
@@ -50,87 +74,102 @@ export async function POST(request: NextRequest) {
 
     if (DEBUG) console.log('Processing query:', query);
 
-    // Initial semantic search
-    const { data: searchData, error: searchError } = await supabase.rpc('match_documents', {
-      query_embedding: await generateQueryEmbedding(query),
-      match_threshold: 0.6, // Lower initial threshold
-      match_count: 10 // Get more candidates for text matching
-    });
+    // Get embeddings for query
+    const queryEmbedding = await generateEmbedding(query);
 
-    if (searchError) {
-      console.error('Search error:', searchError);
-      return new Response(
-        JSON.stringify({
-          message: 'שגיאה בחיפוש מסמכים',
-          error: searchError.message
-        }),
-        { 
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
+    // Search in database with higher threshold
+    const { data: searchData } = await supabase.rpc('match_documents', {
+      query_embedding: queryEmbedding,
+      match_threshold: 0.5,
+      match_count: 20
+    });
 
     // Build context from relevant documents
     let context = '';
+    let foundRelevantContent = false;
+    let bestMatchScore = 0;
+    
     if (searchData && searchData.length > 0) {
-      // Combine semantic similarity with keyword matching
+      // Enhance results with keyword matching
       const enhancedResults = (searchData as SearchResult[])
-        .map(doc => ({
-          ...doc,
-          keywordMatches: findKeywordMatches(query, doc.chunk_text)
-        }))
-        .sort((a, b) => {
-          // Prioritize chunks with keyword matches
-          if (a.keywordMatches !== b.keywordMatches) {
-            return b.keywordMatches - a.keywordMatches;
-          }
-          // Then by similarity score
-          return b.similarity - a.similarity;
+        .map(doc => {
+          const keywordScore = findKeywordMatches(query, doc.chunk_text);
+          return {
+            ...doc,
+            keywordScore,
+            combinedScore: keywordScore * 2 + doc.similarity
+          };
         })
-        .slice(0, 5); // Take top 5 most relevant chunks
+        .sort((a, b) => b.combinedScore - a.combinedScore);
 
       if (DEBUG) {
-        console.log('Enhanced results:', enhancedResults.map(r => ({
+        console.log('Top matches:', enhancedResults.slice(0, 3).map(r => ({
           similarity: r.similarity,
-          keywordMatches: r.keywordMatches,
+          keywordScore: r.keywordScore,
+          combinedScore: r.combinedScore,
           preview: r.chunk_text.substring(0, 100)
         })));
       }
 
-      context = enhancedResults
-        .map(doc => doc.chunk_text)
-        .join('\n\n');
+      // Take most relevant chunks
+      const relevantChunks = enhancedResults
+        .filter(r => r.keywordScore > 0 || r.similarity > 0.6)
+        .slice(0, 5);
+
+      bestMatchScore = relevantChunks[0]?.combinedScore || 0;
+      foundRelevantContent = bestMatchScore > 1;
+
+      if (foundRelevantContent) {
+        context = relevantChunks
+          .map(doc => doc.chunk_text.trim())
+          .filter(text => text.length > 0)
+          .join('\n\n');
+
+        if (DEBUG) {
+          console.log('Full context:', context);
+          console.log('Context summary:', {
+            chunks: relevantChunks.length,
+            bestScore: bestMatchScore,
+            preview: context.substring(0, 200)
+          });
+        }
+      }
     }
 
-    // Prepare system prompt
-    const systemPrompt = `
-אתה עוזר מידע מקצועי המשיב לשאלות בעברית על סמך המידע שסופק לך. תפקידך לסייע למשתמש להבין את המידע שבמסמכים.
+    // Extract title and author from context
+    const lines = context.split('\n');
+    const title = lines[0]?.trim() || 'מדעי';
+    const author = lines[1]?.includes('ד"ר') ? lines[1].trim().split('ד"ר ')[1] : 'מומחה בתחום';
 
-כללים חשובים:
-1. ענה תמיד בעברית
-2. התבסס אך ורק על המידע שסופק - אל תמציא או תוסיף מידע שלא נמצא בהקשר
-3. אם השאלה היא ברכה או שיחה כללית (כמו "היי", "שלום", "מה שלומך"), ענה:
-   "היי! אשמח לענות על שאלות לגבי המידע שנמצא במסמכים. במה אוכל לעזור?"
-4. אם אין בהקשר מידע רלוונטי לשאלה, ענה:
-   "מצטער, לא מצאתי במסמכים מידע שעונה ישירות על שאלתך. האם תוכל לנסח את השאלה בצורה אחרת או לשאול על נושא אחר מהמסמכים?"
-5. אם יש מידע רלוונטי:
-   - צטט במדויק מהמסמכים
-   - הסבר בצורה ברורה
-   - אם המידע חלקי, ציין זאת
+    const systemPrompt = `אתה מומחה בתחום המדעי שעונה על שאלות בעברית.
 
-ההקשר הנוכחי:
+הטקסט הבא הוא מאמר בנושא ${title} מאת ${author}.
+
+תוכן המאמר:
+---
 ${context}
+---
 
-שאלה: ${query}
+השאלה היא: ${query}
+
+הנחיות:
+1. קרא את הטקסט בעיון
+2. זהה את הנושא המרכזי של המאמר (${title})
+3. כתוב תשובה מפורטת בעברית המבוססת על המידע בטקסט
+4. כלול ציטוטים רלוונטיים מהטקסט
+5. אם המאמר רק מזכיר את הנושא בכותרת אבל לא מספק מידע מהותי עליו, ציין זאת בתשובתך
 
 תשובה:`;
+
+    if (DEBUG) {
+      console.log('Full prompt:', systemPrompt);
+    }
 
     const chat = model.startChat({
       history: [],
       generationConfig: {
         maxOutputTokens: 1000,
-        temperature: 0.7,
+        temperature: 0.5,
       },
     });
 
@@ -145,7 +184,7 @@ ${context}
       content: response.text(),
       debug: {
         contextChunks: searchData?.length ?? 0,
-        hasContext: Boolean(context),
+        hasContext: foundRelevantContent,
         query
       }
     };
@@ -171,10 +210,4 @@ ${context}
       }
     );
   }
-}
-
-async function generateQueryEmbedding(text: string): Promise<number[]> {
-  const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-  const result = await embeddingModel.embedContent(text);
-  return result.embedding.values;
 }
