@@ -22,7 +22,7 @@ export default function Navbar() {
   };
 
   return (
-    <nav className="bg-gray-800 text-white p-4 mb-8 rtl">
+    <nav className="bg-gray-800 text-white p-4 rtl">
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <div className="flex space-x-4 space-x-reverse">
           {links.map(({ href, label }) => (

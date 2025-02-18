@@ -76,7 +76,7 @@ export default function Upload() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-(calc(100vh-4rem)) pt-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
         <h1 className="text-2xl font-bold text-center mb-6">העלאת קובץ</h1>
         <div className="space-y-4">

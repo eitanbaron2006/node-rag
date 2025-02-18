@@ -3,8 +3,39 @@
 html[dir="rtl"] input,
 html[dir="rtl"] textarea {
   text-align: right;
+} 
+html[dir="rtl"] .ltr {
+    direction: ltr;
+  }  
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-rgb: 255, 255, 255;
 }
 
-html[dir="rtl"] .ltr {
-  direction: ltr;
+body {
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-rgb));
+  overflow-x: hidden;
+  height: 100vh;
+  margin: 0;
+}
+
+.chat-container {
+  height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 64px);
+}
+
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  scroll-behavior: smooth;
+}
+
+.input-container {
+  border-top: 1px solid #e5e7eb;
+  padding: 1rem;
+  background: white;
 }
