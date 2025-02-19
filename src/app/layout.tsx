@@ -20,7 +20,7 @@ export default function RootLayout({
   return (
     <html lang="he" dir="rtl">
       {/* הסרת ה-className מה-body */}
-      <body className="font-sans">
+      <body className="pt-16 font-sans">
         <Navbar />
         <main className="container mx-auto px-4 pt-8">
           {children}
