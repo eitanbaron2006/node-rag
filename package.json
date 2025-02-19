@@ -10,14 +10,18 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
-    "@supabase/supabase-js": "latest",
+    "@langchain/community": "^0.3.31",
+    "@langchain/google-genai": "^0.1.8",
+    "@supabase/supabase-js": "^2.48.1",
     "@tailwindcss/postcss": "^4.0.6",
     "axios": "latest",
     "formidable": "latest",
     "google-auth-library": "^9.15.1",
+    "langchain": "^0.3.19",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "react-hot-toast": "^2.5.2"
   },
   "devDependencies": {
     "@types/formidable": "latest",

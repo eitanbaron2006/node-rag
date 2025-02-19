@@ -11,7 +11,8 @@ export default function Navbar() {
     { href: '/', label: 'בית' },
     { href: '/upload', label: 'העלאת קובץ' },
     { href: '/search', label: 'חיפוש מסמכים' },
-    { href: '/generate', label: 'יצירת תוכן' }
+    { href: '/generate', label: 'יצירת תוכן' },
+    { href: '/admin', label: 'ניהול מערכת' }
   ];
 
   const isActive = (path: string) => pathname === path;

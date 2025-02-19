@@ -1,10 +1,11 @@
 import React from 'react';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
 import Navbar from '../components/Navbar.tsx';
 
-const inter = Inter({ subsets: ['latin'] });
+// הסרת הייבוא של Inter font
+// import { Inter } from 'next/font/google';
+// const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'מערכת חיפוש מסמכים',
@@ -18,7 +19,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="he" dir="rtl">
-      <body className={inter.className}>
+      {/* הסרת ה-className מה-body */}
+      <body className="font-sans">
         <Navbar />
         <main className="container mx-auto px-4 pt-8">
           {children}

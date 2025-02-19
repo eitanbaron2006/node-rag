@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { processLargeText } from '../../..//utils/embedding.ts';
 import { NextRequest } from 'next/server';
+import { splitTextIntoDocuments, saveDocumentsToSupabase } from '../../../utils/langchain-helpers.ts';
 import process from "node:process";
 
 const supabase = createClient(
@@ -24,7 +24,7 @@ interface SuccessResponse extends BaseApiResponse {
 }
 
 async function deleteExistingFile(fileName: string) {
-  // Delete file from storage
+  // מחיקת הקובץ מהאחסון
   const { error: storageError } = await supabase.storage
     .from('uploads')
     .remove([`files/${fileName}`]);
@@ -33,7 +33,7 @@ async function deleteExistingFile(fileName: string) {
     console.warn('Error deleting existing file:', storageError);
   }
 
-  // Delete associated embeddings
+  // מחיקת ה-embeddings המשויכים
   const { error: dbError } = await supabase
     .from('embeddings')
     .delete()
@@ -46,6 +46,39 @@ async function deleteExistingFile(fileName: string) {
   if (DEBUG) {
     console.log(`Deleted existing file and embeddings for: ${fileName}`);
   }
+}
+
+function extractFileMetadata(fileName: string, fileType: string): Record<string, unknown> {
+  const extension = fileName.split('.').pop()?.toLowerCase() || '';
+  const baseName = fileName.split('.').slice(0, -1).join('.');
+  
+  return {
+    file_extension: extension,
+    content_type: fileType,
+    base_name: baseName,
+    upload_date: new Date().toISOString(),
+    source_type: determineSourceType(extension, fileType)
+  };
+}
+
+function determineSourceType(extension: string, mimeType: string): string {
+  if (mimeType.includes('text/')) {
+    return 'text';
+  }
+  
+  if (mimeType.includes('application/pdf')) {
+    return 'pdf';
+  }
+  
+  if (mimeType.includes('application/json')) {
+    return 'json';
+  }
+  
+  if (mimeType.includes('word') || extension === 'docx' || extension === 'doc') {
+    return 'document';
+  }
+  
+  return 'unknown';
 }
 
 export async function POST(request: NextRequest) {
@@ -67,7 +100,7 @@ export async function POST(request: NextRequest) {
       console.log('[Debug] Processing file:', file.name, 'Type:', file.type, 'Size:', file.size);
     }
 
-    // Check if file already exists and delete if it does
+    // בדיקה אם הקובץ כבר קיים ומחיקתו במידת הצורך
     const { data: existingFiles } = await supabase.storage
       .from('uploads')
       .list('files', {
@@ -84,12 +117,12 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = new Uint8Array(bytes);
     
-    // Upload to Supabase Storage
+    // העלאה ל-Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('uploads')
       .upload(`files/${file.name}`, buffer, {
         contentType: file.type,
-        upsert: false // Don't use upsert since we handle deletion manually
+        upsert: false
       });
 
     if (uploadError) {
@@ -110,7 +143,7 @@ export async function POST(request: NextRequest) {
       console.log('[Debug] File uploaded successfully:', uploadData.path);
     }
 
-    // Get the public URL
+    // קבלת ה-URL הציבורי
     const { data: { publicUrl } } = supabase.storage
       .from('uploads')
       .getPublicUrl(uploadData.path);
@@ -119,7 +152,7 @@ export async function POST(request: NextRequest) {
       console.log('[Debug] Generated public URL:', publicUrl);
     }
 
-    // Generate embedding from text content
+    // יצירת embeddings מהטקסט
     let content = '';
     if (file.type.includes('text') || file.type.includes('application/json')) {
       const textDecoder = new TextDecoder('utf-8');
@@ -130,6 +163,7 @@ export async function POST(request: NextRequest) {
         console.log('[Debug] Content preview:', content.substring(0, 100));
       }
       
+      // ניקוי הטקסט
       content = content.replace(/\0/g, '').normalize('NFC');
       
       if (DEBUG) {
@@ -143,53 +177,66 @@ export async function POST(request: NextRequest) {
       content = file.name;
     }
 
-    if (DEBUG) {
-      console.log('[Debug] Final content length:', content.length);
-    }
-
     try {
-      // Process the content in chunks
-      const processedChunks = await processLargeText(content);
-      const totalChunks = processedChunks.length;
-
+      // חילוץ מטא-דאטה
+      const metadata = extractFileMetadata(file.name, file.type);
+      
+      // הוסף כאן את הקוד החדש - חילוץ מידע מהתוכן
+      // חילוץ כותר ומחבר (אם יש) מהטקסט
+      const lines = content.split('\n').filter(line => line.trim().length > 0);
+      const title = lines[0]?.trim() || file.name;
+      const author = lines[1]?.includes('ד"ר') ? lines[1].trim() : '';
+      
+      // יצירת metadata גלובלי למסמך
+      const globalMetadata = {
+        docTitle: title,
+        author: author,
+        publicationDate: new Date().toISOString(),
+        mainTopic: extractMainTopic(title),
+        docType: determineDocType(file.type, content),
+        sourceId: generateUniqueId(file.name, content),
+        source_file: file.name
+      };
+      
+      // שלב 1: שימוש בפונקציות LangChain לחלוקת הטקסט
+      const docs = await splitTextIntoDocuments(content, {
+        ...metadata,
+        ...globalMetadata,
+        file_url: publicUrl,
+        file_name: file.name,
+        content_type: file.type
+      });
+      
       if (DEBUG) {
-        console.log(`[Debug] Generated ${totalChunks} chunks with embeddings`);
+        console.log(`[Debug] Split content into ${docs.length} documents`);
       }
-
-      // Save chunks to database
-      for (let i = 0; i < processedChunks.length; i++) {
-        const { chunk, embedding } = processedChunks[i];
-        
-        const { error: insertError } = await supabase
-          .from('embeddings')
-          .insert([{
-            file_url: publicUrl,
-            file_name: file.name,
-            content_type: file.type,
-            embedding_vector: embedding,
-            chunk_text: chunk,
-            chunk_index: i,
-            total_chunks: totalChunks
-          }]);
-
-        if (insertError) {
-          console.error(`[Error] Error saving chunk ${i}:`, insertError);
-          throw new Error(`Failed to save chunk ${i}: ${insertError.message}`);
-        }
-
-        if (DEBUG) {
-          console.log(`[Debug] Saved chunk ${i + 1}/${totalChunks}`);
-        }
-      }
-
+      
+      // עדכון globalMetadata עם מספר ה-chunks
+      const updatedGlobalMetadata = {
+        ...globalMetadata,
+        totalChunks: docs.length
+      };
+      
+      // הוספת המטא-דאטה הגלובלי לכל חלק
+      const enrichedDocs = docs.map(doc => {
+        doc.metadata = {
+          ...doc.metadata,
+          ...updatedGlobalMetadata
+        };
+        return doc;
+      });
+      
+      // שמירת המסמכים בסופבייס
+      await saveDocumentsToSupabase(enrichedDocs, publicUrl, file.name);
+      
       if (DEBUG) {
-        console.log('[Debug] All chunks saved successfully');
+        console.log('[Debug] All documents saved to Supabase');
       }
 
       const response: SuccessResponse = {
         message: 'File uploaded and processed successfully',
         fileUrl: publicUrl,
-        chunks: totalChunks
+        chunks: docs.length
       };
 
       return new Response(
@@ -227,4 +274,57 @@ export async function POST(request: NextRequest) {
       }
     );
   }
+}
+
+// פונקציות עזר לחילוץ מידע
+
+// חילוץ נושא מרכזי מהכותרת
+function extractMainTopic(title: string): string {
+  const mainTopics = [
+    'שיבוט', 'ביולוגיה', 'רפואה', 'גנטיקה', 'מדע', 
+    'פיזיקה', 'כימיה', 'מחשבים', 'בינה מלאכותית'
+  ];
+  
+  const titleLower = title.toLowerCase();
+  for (const topic of mainTopics) {
+    if (titleLower.includes(topic.toLowerCase())) {
+      return topic;
+    }
+  }
+  
+  // אם לא נמצא נושא ספציפי, החזר את המילה הראשונה מהכותרת
+  return title.split(' ')[0] || 'כללי';
+}
+
+// קביעת סוג המסמך
+function determineDocType(fileType: string, content: string): string {
+  if (content.includes('תקציר') && content.includes('מבוא') && content.includes('שיטות')) {
+    return 'מאמר מדעי';
+  }
+  
+  if (content.includes('פרק') && content.length > 5000) {
+    return 'ספר';
+  }
+  
+  if (fileType.includes('pdf')) {
+    return 'מסמך PDF';
+  }
+  
+  if (fileType.includes('word')) {
+    return 'מסמך Word';
+  }
+  
+  return 'טקסט';
+}
+
+// יצירת מזהה ייחודי למסמך
+function generateUniqueId(fileName: string, content: string): string {
+  // פשוט לדוגמה - בפרויקט אמיתי כדאי להשתמש בספריית האשינג
+  const hashBase = fileName + content.substring(0, 100) + Date.now();
+  let hash = 0;
+  for (let i = 0; i < hashBase.length; i++) {
+    hash = ((hash << 5) - hash) + hashBase.charCodeAt(i);
+    hash |= 0; // Convert to 32bit integer
+  }
+  return 'doc_' + Math.abs(hash).toString(16);
 }
