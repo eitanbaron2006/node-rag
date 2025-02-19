@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import { NextRequest } from 'next/server';
 import process from "node:process";
 
 const supabase = createClient(
@@ -7,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     // קבלת מידע על ה-embeddings מקובץ לפי שם הקובץ
     const { data, error } = await supabase
@@ -30,6 +29,8 @@ export async function GET(request: NextRequest) {
     }
 
     // עיבוד התוצאות וקיבוץ לפי שם קובץ
+    // deno-lint-ignore no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const embeddingsInfo = data.reduce((acc: Record<string, any>, item) => {
       if (!acc[item.file_name]) {
         acc[item.file_name] = {

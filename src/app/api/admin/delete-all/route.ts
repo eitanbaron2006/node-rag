@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import { NextRequest } from 'next/server';
 import process from "node:process";
 
 const supabase = createClient(
@@ -7,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   try {
     // 1. קבלת רשימת כל הקבצים מ-storage
     const { data: files, error: listError } = await supabase.storage

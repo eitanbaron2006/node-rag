@@ -1,3 +1,4 @@
+// deno-lint-ignore-file jsx-button-has-type
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -271,7 +272,7 @@ export default function AdminPage() {
             
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">
-                הקלד "מחק הכל" לאישור:
+                הקלד `&quot;`מחק הכל`&quot;` לאישור:
               </label>
               <input
                 type="text"

@@ -3260,6 +3260,7 @@
         "npm:react-dom@latest",
         "npm:react-hot-toast@^2.5.2",
         "npm:react@latest",
+        "npm:tailwind-scrollbar@4",
         "npm:tailwindcss@^4.0.6",
         "npm:typescript@latest"
       ]

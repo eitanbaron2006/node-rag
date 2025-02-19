@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     try {
       // צעד 1: חיפוש מסמכים רלוונטיים
-      const relevantDocs = await searchSimilarDocuments(query, 5);
+      const relevantDocs = await searchSimilarDocuments(query, 20);
       const hasRelevantDocs = relevantDocs.length > 0;
       
       if (DEBUG) {

@@ -94,8 +94,8 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 export async function splitTextIntoDocuments(
   text: string, 
   metadata: Record<string, unknown> = {},
-  chunkSize = 500,
-  chunkOverlap = 100
+  chunkSize = 768,
+  chunkOverlap = 50
 ): Promise<Document[]> {
   const splitter = new RecursiveCharacterTextSplitter({
     chunkSize,
@@ -241,7 +241,7 @@ export async function runModelWithRetry(
     model: modelName,
     generationConfig: {
       temperature,
-      maxOutputTokens: 1000,
+      maxOutputTokens: 3000,
     }
   });
   
