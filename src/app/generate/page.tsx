@@ -1,5 +1,6 @@
 'use client';
 
+
 import React, { useState, useRef, useEffect } from 'react';
 
 interface Message {
@@ -90,12 +91,7 @@ export default function ChatPage() {
         <h1 className="text-xl font-semibold">שיחה על המידע</h1>
       </div>
 
-      <div className="flex-1 overflow-y-scroll p-4 space-y-4 
-            scrollbar scrollbar-thin 
-            scrollbar-thumb-gray-400 
-            scrollbar-track-gray-200
-            scrollbar-thumb-rounded-full
-            scrollbar-track-rounded-full">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message, index) => (
           <div
             key={index}

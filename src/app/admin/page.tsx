@@ -187,7 +187,7 @@ export default function AdminPage() {
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-gray-300 rounded-md ltr"
               >
                 {availableModels.length === 0 ? (
                   <option value="">טוען מודלים...</option>

@@ -22,12 +22,7 @@ export default function RootLayout({
       {/* הסרת ה-className מה-body */}
       <body className="pt-16 font-sans">
         <Navbar />
-        <main className="container mx-auto px-4 pt-8  
-            scrollbar scrollbar-thin 
-            scrollbar-thumb-gray-400 
-            scrollbar-track-gray-200
-            scrollbar-thumb-rounded-full
-            scrollbar-track-rounded-full">
+        <main className="container mx-auto px-4 pt-8">
           {children}
         </main>
       </body>
