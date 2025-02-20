@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { 
-  searchSimilarDocuments, 
-  createHebrewContextPrompt,
+  searchSimilarDocuments,
   runModelWithRetry,
   runQueryWithAllModels
 } from '../../../utils/langchain-helpers.ts';
@@ -17,6 +16,15 @@ const DEBUG = true;
 
 // טבלה לשמירת הגדרות
 const SETTINGS_TABLE = 'system_settings';
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  debug?: {
+    contextChunks: number;
+    hasContext: boolean;
+  };
+}
 
 interface GenerateResponse {
   content: string;
@@ -51,7 +59,7 @@ async function getSettings() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { query } = await request.json();
+    const { query, history } = await request.json();
 
     if (!query) {
       return new Response(
@@ -90,12 +98,26 @@ export async function POST(request: NextRequest) {
       let retryCount = 0;
       
       if (hasRelevantDocs) {
-        // צעד 2: יצירת פרומפט עם הקשר
-        const context = relevantDocs.map(doc => doc.pageContent).join('\n\n');
-        const prompt = createHebrewContextPrompt(context, query);
+        // יצירת הקשר מההיסטוריה ומהמסמכים הרלוונטיים
+        const chatHistory = (history as Message[])
+          .map((msg: Message) => `${msg.role === 'user' ? 'שאלה' : 'תשובה'}: ${msg.content}`)
+          .join('\n\n');
+          
+        const docsContext = relevantDocs.map(doc => doc.pageContent).join('\n\n');
+        
+        // שילוב ההיסטוריה וההקשר בפרומפט
+        const prompt = `היסטוריית השיחה:
+${chatHistory}
+
+מידע רלוונטי מהמסמכים:
+${docsContext}
+
+שאלה נוכחית: ${query}
+
+השב לשאלה האחרונה בהתבסס על המידע הרלוונטי מהמסמכים ובהתחשב בהקשר השיחה הקודם. אם אין מידע רלוונטי, ציין זאת.`;
         
         if (DEBUG) {
-          console.log('Context length:', context.length);
+          console.log('Context length:', docsContext.length);
           console.log('Full prompt:', prompt);
         }
         

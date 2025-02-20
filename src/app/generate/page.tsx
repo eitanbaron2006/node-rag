@@ -1,6 +1,5 @@
 'use client';
 
-
 import React, { useState, useRef, useEffect } from 'react';
 
 interface Message {
@@ -16,6 +15,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [historyCount, setHistoryCount] = useState<number>(6);
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);
 
@@ -40,7 +40,10 @@ export default function ChatPage() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: userMessage }),
+        body: JSON.stringify({ 
+          query: userMessage,
+          history: messages.slice(-historyCount)  // שליחת מספר מוגבל של הודעות מההיסטוריה
+        }),
       });
 
       if (!response.ok) {
@@ -87,8 +90,22 @@ export default function ChatPage() {
 
   return (
     <div className="h-[calc(100vh-7rem)] flex flex-col">
-      <div className="flex items-center p-4 border-b">
+      <div className="flex items-center justify-between p-4 border-b">
         <h1 className="text-xl font-semibold">שיחה על המידע</h1>
+        <div className="flex items-center gap-2">
+          <label htmlFor="historyCount" className="text-sm text-gray-600">
+            מספר הודעות בזיכרון:
+          </label>
+          <input
+            id="historyCount"
+            type="number"
+            min="1"
+            max="20"
+            value={historyCount}
+            onChange={(e) => setHistoryCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+            className="w-16 p-1 text-center border rounded"
+          />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
