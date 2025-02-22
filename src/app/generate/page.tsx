@@ -12,14 +12,64 @@ interface Message {
   };
 }
 
+// Helper functions for localStorage
+const STORAGE_KEY = 'chat_messages';
+const HISTORY_COUNT_KEY = 'chat_history_count';
+
+function saveToLocalStorage(messages: Message[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+  } catch (error) {
+    console.error('Error saving messages to localStorage:', error);
+  }
+}
+
+function loadFromLocalStorage(): Message[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : [];
+  } catch (error) {
+    console.error('Error loading messages from localStorage:', error);
+    return [];
+  }
+}
+
+function saveHistoryCount(count: number) {
+  try {
+    localStorage.setItem(HISTORY_COUNT_KEY, count.toString());
+  } catch (error) {
+    console.error('Error saving history count to localStorage:', error);
+  }
+}
+
+function loadHistoryCount(): number {
+  try {
+    const saved = localStorage.getItem(HISTORY_COUNT_KEY);
+    return saved ? parseInt(saved, 10) : 6;
+  } catch (error) {
+    console.error('Error loading history count from localStorage:', error);
+    return 6;
+  }
+}
+
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => loadFromLocalStorage());
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [historyCount, setHistoryCount] = useState<number>(6);
+  const [historyCount, setHistoryCount] = useState<number>(() => loadHistoryCount());
   const [currentModel, setCurrentModel] = useState<string>('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    saveToLocalStorage(messages);
+  }, [messages]);
+
+  // Save historyCount to localStorage whenever it changes
+  useEffect(() => {
+    saveHistoryCount(historyCount);
+  }, [historyCount]);
 
   // Fetch initial model when component mounts
   useEffect(() => {
@@ -108,11 +158,24 @@ export default function ChatPage() {
     }
   };
 
+  const handleClearChat = () => {
+    if (window.confirm('האם אתה בטוח שברצונך למחוק את כל השיחה?')) {
+      setMessages([]);
+      saveToLocalStorage([]);
+    }
+  };
+
   return (
     <div className="h-[calc(100vh-7rem)] flex flex-col">
       <div className="flex items-center justify-between p-4 border-b">
         <h1 className="text-xl font-semibold">שיחה על המידע</h1>
         <div className="flex items-center gap-4">
+          <button
+            onClick={handleClearChat}
+            className="px-3 py-1 text-sm text-red-600 border border-red-600 rounded hover:bg-red-50"
+          >
+            נקה שיחה
+          </button>
           <label htmlFor="historyCount" className="text-sm text-gray-600">
             מספר הודעות בזיכרון:
           </label>

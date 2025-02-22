@@ -2,9 +2,11 @@ import { NextRequest } from 'next/server';
 import { 
   searchSimilarDocuments,
   runModelWithRetry,
-  runQueryWithAllModels
+  runQueryWithAllModels,
+  createHebrewContextPrompt
 } from '../../../utils/langchain-helpers.ts';
 import { createClient } from '@supabase/supabase-js';
+import { Document } from 'langchain/document';
 import process from "node:process";
 
 const supabase = createClient(
@@ -16,15 +18,6 @@ const DEBUG = true;
 
 // טבלה לשמירת הגדרות
 const SETTINGS_TABLE = 'system_settings';
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  debug?: {
-    contextChunks: number;
-    hasContext: boolean;
-  };
-}
 
 interface GenerateResponse {
   content: string;
@@ -57,9 +50,41 @@ async function getSettings() {
   }
 }
 
+function organizeDocumentsByRelevance(docs: Document[]) {
+  // מיון המסמכים לפי דמיון ורלוונטיות
+  const sortedDocs = docs.sort((a, b) => {
+    // בדיקת התאמה מדויקת
+    const aExact = a.metadata.exact_match || false;
+    const bExact = b.metadata.exact_match || false;
+    if (aExact !== bExact) return bExact ? 1 : -1;
+
+    // מיון לפי דמיון אם אין התאמה מדויקת
+    return (b.metadata.similarity || 0) - (a.metadata.similarity || 0);
+  });
+
+  // ארגון המסמכים לפי נושאים
+  const topics: { [key: string]: string[] } = {};
+  sortedDocs.forEach(doc => {
+    const content = doc.pageContent;
+    // זיהוי פשוט של נושא לפי המשפט הראשון או כותרת
+    const topic = content.split('.')[0].trim();
+    if (!topics[topic]) {
+      topics[topic] = [];
+    }
+    topics[topic].push(content);
+  });
+
+  // בניית הקשר מאורגן
+  return Object.entries(topics)
+    .map(([topic, contents]) => {
+      return `${topic}:\n${contents.join('\n\n')}`;
+    })
+    .join('\n\n---\n\n');
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { query, history } = await request.json();
+    const { query } = await request.json();
 
     if (!query) {
       return new Response(
@@ -82,8 +107,8 @@ export async function POST(request: NextRequest) {
     if (DEBUG) console.log('Using settings:', { selectedModel, maxRetries, retryStrategy });
 
     try {
-      // צעד 1: חיפוש מסמכים רלוונטיים
-      const relevantDocs = await searchSimilarDocuments(query, 20);
+      // צעד 1: חיפוש מסמכים רלוונטיים - הגדלת מספר התוצאות
+      const relevantDocs = await searchSimilarDocuments(query, 50); // הגדלה ל-50 תוצאות
       const hasRelevantDocs = relevantDocs.length > 0;
       
       if (DEBUG) {
@@ -98,26 +123,14 @@ export async function POST(request: NextRequest) {
       let retryCount = 0;
       
       if (hasRelevantDocs) {
-        // יצירת הקשר מההיסטוריה ומהמסמכים הרלוונטיים
-        const chatHistory = (history as Message[])
-          .map((msg: Message) => `${msg.role === 'user' ? 'שאלה' : 'תשובה'}: ${msg.content}`)
-          .join('\n\n');
-          
-        const docsContext = relevantDocs.map(doc => doc.pageContent).join('\n\n');
-        
-        // שילוב ההיסטוריה וההקשר בפרומפט
-        const prompt = `היסטוריית השיחה:
-${chatHistory}
+        // ארגון וסידור ההקשר
+        const organizedContext = organizeDocumentsByRelevance(relevantDocs);
 
-מידע רלוונטי מהמסמכים:
-${docsContext}
-
-שאלה נוכחית: ${query}
-
-השב לשאלה האחרונה בהתבסס על המידע הרלוונטי מהמסמכים ובהתחשב בהקשר השיחה הקודם. אם אין מידע רלוונטי, ציין זאת.`;
+        // יצירת פרומפט מובנה עם ההקשר המאורגן
+        const prompt = createHebrewContextPrompt(organizedContext, query);
         
         if (DEBUG) {
-          console.log('Context length:', docsContext.length);
+          console.log('Context length:', organizedContext.length);
           console.log('Full prompt:', prompt);
         }
         
@@ -127,15 +140,9 @@ ${docsContext}
           const result = await runQueryWithAllModels(prompt, maxRetries);
           content = result.result;
           usedModel = result.usedModel;
-          // הערה: retryCount לא זמין במקרה זה
         } else {
-          // ניסיון רק עם המודל הנבחר
-          // let attempts = 0;
-          // let success = false;
-          
           try {
             content = await runModelWithRetry(prompt, selectedModel, 0.5, maxRetries);
-            // success = true;
             retryCount = 0;
           } catch (error) {
             console.error('All retries failed:', error);
