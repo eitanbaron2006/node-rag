@@ -1,7 +1,12 @@
+// import { pdfToText } from '../../../utils/pdf-to-text.js';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
 import { splitTextIntoDocuments, saveDocumentsToSupabase } from '../../../utils/langchain-helpers.ts';
+// import { extractHebrewTextFromPDF } from '../../../utils/pdf-extractor.ts';
+import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
+import { transliterateToEnglish } from '../../../utils/filenameTransliterator.ts';
 import process from "node:process";
+import fs from 'node:fs/promises';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -85,7 +90,11 @@ export async function POST(request: NextRequest) {
   try {
     const data = await request.formData();
     const file = data.get('file') as File;
-    
+        
+    const tempFilePath = transliterateToEnglish(file.name).replaceAll(' ', '_');
+    const fileBuffer = await file.arrayBuffer();    
+    await fs.writeFile(tempFilePath, new Uint8Array(fileBuffer));
+
     if (!file) {
       return new Response(
         JSON.stringify({ message: 'No file uploaded' }),
@@ -97,21 +106,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (DEBUG) {
-      console.log('[Debug] Processing file:', file.name, 'Type:', file.type, 'Size:', file.size);
+      console.log('[Debug] Processing file:', tempFilePath, 'Type:', file.type, 'Size:', file.size);
     }
+
+    //const fileName = transliterateToEnglish(file.name).replaceAll(' ', '_');
 
     // בדיקה אם הקובץ כבר קיים ומחיקתו במידת הצורך
     const { data: existingFiles } = await supabase.storage
       .from('uploads')
       .list('files', {
-        search: file.name
+        search: tempFilePath
       });
 
     if (existingFiles && existingFiles.length > 0) {
       if (DEBUG) {
-        console.log('[Debug] Found existing file, deleting:', file.name);
+        console.log('[Debug] Found existing file, deleting:', tempFilePath);
       }
-      await deleteExistingFile(file.name);
+      await deleteExistingFile(tempFilePath);
     }
 
     const bytes = await file.arrayBuffer();
@@ -120,7 +131,7 @@ export async function POST(request: NextRequest) {
     // העלאה ל-Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('uploads')
-      .upload(`files/${file.name}`, buffer, {
+      .upload(`files/${tempFilePath}`, buffer, {
         contentType: file.type,
         upsert: false
       });
@@ -170,23 +181,56 @@ export async function POST(request: NextRequest) {
         console.log('[Debug] Processed content length:', content.length);
         console.log('[Debug] Processed content preview:', content.substring(0, 100));
       }
+    } else if (file.type.includes('application/pdf')) {
+      // Extract text from PDF using our new utility
+      try {
+
+        // const imagesDir = "./images"; // Or "./images" or any path you like
+        // const language = "heb+eng"; // e.g. "eng", "heb", etc.
+        // const content1 = await pdfToText(`${tempFilePath}`, imagesDir, language);
+        // content = content1.replace(/\0/g, '').normalize('NFC');
+        const loader = new PDFLoader(`${tempFilePath}`);
+        const docs = await loader.load();
+        content = docs.map(doc => doc.pageContent).join(' ');
+        
+        if (DEBUG) {
+          console.log('[Debug] Extracted PDF content length:', content.length);
+          console.log('[Debug] PDF content preview:', content.substring(0, 1000));
+        }
+      
+        // const tempFilePath = `temp-${file.name}`;
+        // await fs.writeFile(tempFilePath, buffer);
+        // content = await extractHebrewTextFromPDF(tempFilePath);
+        
+        // // Clean up temp file
+        // await fs.unlink(tempFilePath).catch(console.error);
+        
+        // if (DEBUG) {
+        //   console.log('[Debug] Extracted PDF content length:', content.length);
+        //   console.log('[Debug] PDF content preview:', content.substring(0, 100));
+        // }
+      } catch (pdfError) {
+        console.error('[Error] PDF extraction error:', pdfError);
+        content = tempFilePath; // Fallback to filename if extraction fails
+      }
     } else {
       if (DEBUG) {
         console.warn('[Debug] Non-text file type:', file.type, 'Using filename as content');
       }
-      content = file.name;
+      content = tempFilePath;
     }
 
     try {
       // חילוץ מטא-דאטה
       const metadata = extractFileMetadata(file.name, file.type);
       
-      // הוסף כאן את הקוד החדש - חילוץ מידע מהתוכן
       // חילוץ כותר ומחבר (אם יש) מהטקסט
       const lines = content.split('\n').filter(line => line.trim().length > 0);
       const title = lines[0]?.trim() || file.name;
       const author = lines[1]?.includes('ד"ר') ? lines[1].trim() : '';
-      
+      console.log('Title:', title, 'Author:', author);
+      console.log('Content:', content);
+
       // יצירת metadata גלובלי למסמך
       const globalMetadata = {
         docTitle: title,
@@ -227,7 +271,7 @@ export async function POST(request: NextRequest) {
       });
       
       // שמירת המסמכים בסופבייס
-      await saveDocumentsToSupabase(enrichedDocs, publicUrl, file.name);
+      await saveDocumentsToSupabase(enrichedDocs, publicUrl, tempFilePath);
       
       if (DEBUG) {
         console.log('[Debug] All documents saved to Supabase');

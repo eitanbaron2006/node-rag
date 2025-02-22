@@ -8,6 +8,7 @@ interface Message {
   debug?: {
     contextChunks: number;
     hasContext: boolean;
+    usedModel?: string;
   };
 }
 
@@ -16,8 +17,25 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [historyCount, setHistoryCount] = useState<number>(6);
+  const [currentModel, setCurrentModel] = useState<string>('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);
+
+  // Fetch initial model when component mounts
+  useEffect(() => {
+    const fetchSelectedModel = async () => {
+      try {
+        const response = await fetch('/api/admin/settings');
+        if (!response.ok) throw new Error('Failed to fetch settings');
+        const data = await response.json();
+        setCurrentModel(data.settings?.selectedModel || '');
+      } catch (error) {
+        console.error('Error fetching model:', error);
+      }
+    };
+
+    fetchSelectedModel();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
@@ -51,12 +69,14 @@ export default function ChatPage() {
       }
 
       const data = await response.json();
+      setCurrentModel(data.debug.usedModel || '');
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: data.content,
         debug: {
           contextChunks: data.debug.contextChunks,
-          hasContext: data.debug.hasContext
+          hasContext: data.debug.hasContext,
+          usedModel: data.debug.usedModel
         }
       }]);
     } catch (error) {
@@ -92,7 +112,7 @@ export default function ChatPage() {
     <div className="h-[calc(100vh-7rem)] flex flex-col">
       <div className="flex items-center justify-between p-4 border-b">
         <h1 className="text-xl font-semibold">שיחה על המידע</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
           <label htmlFor="historyCount" className="text-sm text-gray-600">
             מספר הודעות בזיכרון:
           </label>
@@ -105,6 +125,11 @@ export default function ChatPage() {
             onChange={(e) => setHistoryCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
             className="w-16 p-1 text-center border rounded"
           />
+          {currentModel && (
+            <div className="text-sm text-gray-600">
+              מודל: {currentModel}
+            </div>
+          )}
         </div>
       </div>
 
