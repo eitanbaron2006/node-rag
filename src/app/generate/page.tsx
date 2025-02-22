@@ -53,10 +53,10 @@ function loadHistoryCount(): number {
 }
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>(() => loadFromLocalStorage());
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [historyCount, setHistoryCount] = useState<number>(() => loadHistoryCount());
+  const [historyCount, setHistoryCount] = useState<number>(6);
   const [currentModel, setCurrentModel] = useState<string>('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);
@@ -70,6 +70,14 @@ export default function ChatPage() {
   useEffect(() => {
     saveHistoryCount(historyCount);
   }, [historyCount]);
+
+  // Load initial data from localStorage on client side
+  useEffect(() => {
+    const savedMessages = loadFromLocalStorage();
+    const savedHistoryCount = loadHistoryCount();
+    setMessages(savedMessages);
+    setHistoryCount(savedHistoryCount);
+  }, []);
 
   // Fetch initial model when component mounts
   useEffect(() => {
